@@ -1,0 +1,5 @@
+{
+  "name": "Nexus Ledger",
+  "description": "An institutional-grade XRPL interface for Asset Management, AMM Liquidity, and TrustLine configuration.",
+  "requestFramePermissions": []
+}
