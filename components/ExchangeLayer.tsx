@@ -1,9 +1,9 @@
-import React, { useState } from 'react';
-import { ArrowRightLeft, Droplets, TrendingUp, Activity, BarChart3, ArrowDown, ArrowUp, Settings, Sliders } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { ArrowRightLeft, Droplets, TrendingUp, Activity, BarChart3, ArrowDown, ArrowUp, Settings, Sliders, ChevronsRight, GitCommit } from 'lucide-react';
 import { xrplService } from '../services/xrplService';
 import { JsonViewer } from './JsonViewer';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
-import { Order } from '../types';
+import { Order, SwapHop } from '../types';
 
 const mockChartData = [
   { time: '10:00', price: 0.51 },
@@ -53,6 +53,7 @@ export const ExchangeLayer: React.FC<ExchangeLayerProps> = ({ walletAddress, add
   const [slippage, setSlippage] = useState(0.5);
   const [deadline, setDeadline] = useState(20);
   const [showSwapSettings, setShowSwapSettings] = useState(false);
+  const [swapPath, setSwapPath] = useState<SwapHop[]>([]);
 
   const activeWallet = walletAddress || "rUser...Wallet";
 
@@ -67,6 +68,18 @@ export const ExchangeLayer: React.FC<ExchangeLayerProps> = ({ walletAddress, add
     limitAmount, 
     limitPrice
   );
+
+  // Simulate Pathfinding update
+  useEffect(() => {
+    if (activeTab === 'swap') {
+        setSwapPath([
+            { type: 'Source', detail: 'XRP', output: '100.0 XRP' },
+            { type: 'CLOB', detail: 'XRP/EUR', output: '50.12 EUR' },
+            { type: 'AMM', detail: 'EUR/USD', output: '55.00 USD' },
+            { type: 'Destination', detail: 'USD', output: '55.00 USD' }
+        ]);
+    }
+  }, [activeTab]);
 
   const handleSubmitOrder = () => {
     if (addToast) addToast('success', 'Order Submitted', `${orderType} order for ${limitAmount} XRP placed on CLOB.`);
@@ -87,6 +100,34 @@ export const ExchangeLayer: React.FC<ExchangeLayerProps> = ({ walletAddress, add
         className={`absolute right-0 top-0 bottom-0 opacity-10 ${order.type === 'bid' ? 'bg-nexus-success' : 'bg-nexus-danger'}`} 
         style={{ width: `${Math.random() * 100}%` }}
       />
+    </div>
+  );
+
+  // Pathfinding Visualization Component
+  const PathVisualizer = () => (
+    <div className="mt-6 mb-2">
+        <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-2">
+            <GitCommit size={14} className="text-nexus-accent" /> Optimal Path
+        </h4>
+        <div className="flex items-center gap-2 overflow-x-auto pb-2">
+            {swapPath.map((hop, i) => (
+                <div key={i} className="flex items-center shrink-0">
+                    <div className={`
+                        flex flex-col items-center justify-center p-2 rounded-lg border min-w-[80px]
+                        ${hop.type === 'Source' || hop.type === 'Destination' ? 'bg-nexus-800 border-nexus-600' : 'bg-nexus-900 border-nexus-800'}
+                    `}>
+                        <span className="text-[10px] text-gray-400 uppercase font-bold">{hop.type}</span>
+                        <span className="text-xs font-mono text-white font-medium">{hop.detail}</span>
+                    </div>
+                    {i < swapPath.length - 1 && (
+                        <div className="flex flex-col items-center mx-1">
+                            <div className="h-px w-6 bg-nexus-700"></div>
+                            <span className="text-[9px] text-nexus-accent -mt-2 bg-nexus-900 px-1">{hop.output}</span>
+                        </div>
+                    )}
+                </div>
+            ))}
+        </div>
     </div>
   );
 
@@ -139,7 +180,7 @@ export const ExchangeLayer: React.FC<ExchangeLayerProps> = ({ walletAddress, add
                   </div>
                 </div>
                 <div className="flex-1 w-full min-h-0">
-                    <ResponsiveContainer width="100%" height="100%">
+                    <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
                         <AreaChart data={mockChartData}>
                             <defs>
                                 <linearGradient id="colorPrice" x1="0" y1="0" x2="0" y2="1">
@@ -153,7 +194,15 @@ export const ExchangeLayer: React.FC<ExchangeLayerProps> = ({ walletAddress, add
                                 contentStyle={{ backgroundColor: '#1e293b', borderColor: '#334155', color: '#f8fafc' }}
                                 itemStyle={{ color: '#38bdf8' }}
                             />
-                            <Area type="monotone" dataKey="price" stroke="#38bdf8" strokeWidth={2} fillOpacity={1} fill="url(#colorPrice)" />
+                            <Area 
+                                type="monotone" 
+                                dataKey="price" 
+                                stroke="#38bdf8" 
+                                strokeWidth={2} 
+                                fillOpacity={1} 
+                                fill="url(#colorPrice)" 
+                                isAnimationActive={false}
+                            />
                         </AreaChart>
                     </ResponsiveContainer>
                 </div>
@@ -226,8 +275,8 @@ export const ExchangeLayer: React.FC<ExchangeLayerProps> = ({ walletAddress, add
                )}
 
                {activeTab === 'swap' && (
-                 <div className="max-w-md mx-auto space-y-6 pt-4 relative">
-                     <div className="flex justify-between items-center mb-2">
+                 <div className="max-w-md mx-auto space-y-4 pt-2 relative">
+                     <div className="flex justify-between items-center mb-1">
                         <h3 className="text-sm font-bold text-gray-300">Instant Swap</h3>
                         <button 
                             onClick={() => setShowSwapSettings(!showSwapSettings)}
@@ -306,7 +355,10 @@ export const ExchangeLayer: React.FC<ExchangeLayerProps> = ({ walletAddress, add
                         </div>
                      </div>
                      
-                     <div className="text-xs text-gray-500 text-center">
+                     {/* Pathfinding Visualizer */}
+                     <PathVisualizer />
+
+                     <div className="text-xs text-gray-500 text-center pb-2">
                         <span className="mr-2">Slippage: <span className="text-nexus-warning">{slippage}%</span></span>
                         <span>Route: Best Price (CLOB + AMM)</span>
                      </div>

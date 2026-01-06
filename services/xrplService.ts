@@ -51,7 +51,7 @@ export class XRPLService {
     return tx;
   }
 
-  generateTrustSet(account: string, issuer: string, currency: string, limit: string, isAuth: boolean = false): TransactionTemplate {
+  generateTrustSet(account: string, issuer: string, currency: string, limit: string, isAuth: boolean = false, isFreeze: boolean = false): TransactionTemplate {
     const tx: TransactionTemplate = {
       TransactionType: "TrustSet",
       Account: account || "USER_HOT_WALLET_ADDRESS",
@@ -65,11 +65,27 @@ export class XRPLService {
 
     if (isAuth) {
       tx.Flags = 65536; // tfSetAuth
+    } else if (isFreeze) {
+      tx.Flags = 1048576; // tfSetFreeze
     } else {
       tx.Flags = 131072; // tfSetNoRipple
     }
 
     return tx;
+  }
+
+  generateClawback(issuer: string, targetAccount: string, currency: string, amount: string): TransactionTemplate {
+    return {
+        TransactionType: "Clawback",
+        Account: issuer || "RF_COLD_WALLET_ADDRESS",
+        Amount: {
+            currency: currency,
+            issuer: issuer,
+            value: amount
+        },
+        Destination: targetAccount,
+        Fee: "12"
+    };
   }
 
   generatePayment(account: string, destination: string, currency: string, issuer: string, amount: string): TransactionTemplate {

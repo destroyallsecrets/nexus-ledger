@@ -48,11 +48,25 @@ export interface Asset {
   };
 }
 
+export interface TrustLineHolder {
+  address: string;
+  balance: string;
+  limit: string;
+  status: 'active' | 'frozen' | 'authorized';
+  kycLevel: number;
+}
+
 export interface Order {
   price: number;
   amount: number;
   total: number;
   type: 'bid' | 'ask';
+}
+
+export interface SwapHop {
+  type: 'Source' | 'AMM' | 'CLOB' | 'Destination';
+  detail: string;
+  output: string;
 }
 
 export interface AuditLogEntry {

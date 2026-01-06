@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Shield, CheckCircle2, Lock, FileJson, Plus, Settings, Users, AlertOctagon, X, Wallet, ArrowRight } from 'lucide-react';
+import { Shield, CheckCircle2, Lock, FileJson, Plus, Settings, Users, AlertOctagon, X, Wallet, ArrowRight, Ban, RefreshCcw, Search } from 'lucide-react';
 import { xrplService } from '../services/xrplService';
 import { JsonViewer } from './JsonViewer';
-import { Asset } from '../types';
+import { Asset, TrustLineHolder } from '../types';
 
 interface AssetLayerProps {
   walletAddress?: string;
@@ -34,6 +34,17 @@ const INITIAL_ASSETS: Asset[] = [
   }
 ];
 
+const MOCK_HOLDERS: Record<string, TrustLineHolder[]> = {
+    'USD': [
+        { address: 'rUser1...9xP2', balance: '150,000.00', limit: '1,000,000', status: 'active', kycLevel: 3 },
+        { address: 'rUser2...8mK1', balance: '45,000.00', limit: '100,000', status: 'frozen', kycLevel: 1 },
+        { address: 'rInst...L9pQ', balance: '2,500,000.00', limit: '10,000,000', status: 'active', kycLevel: 5 },
+    ],
+    'EUR': [
+        { address: 'rUser3...7jN4', balance: '5,000.00', limit: '50,000', status: 'active', kycLevel: 2 },
+    ]
+};
+
 export const AssetLayer: React.FC<AssetLayerProps> = ({ walletAddress, addToast }) => {
   const [assets, setAssets] = useState<Asset[]>(INITIAL_ASSETS);
   const [selectedAsset, setSelectedAsset] = useState<Asset>(assets[0]);
@@ -45,26 +56,56 @@ export const AssetLayer: React.FC<AssetLayerProps> = ({ walletAddress, addToast 
   const [requireAuth, setRequireAuth] = useState(selectedAsset.flags.requireAuth);
   const [defaultRipple, setDefaultRipple] = useState(selectedAsset.flags.defaultRipple);
   
-  // TrustLine State
-  const [targetUser, setTargetUser] = useState(walletAddress || "rU...UserWallet");
-  const [limit, setLimit] = useState("1000000");
+  // Holder State
+  const [holders, setHolders] = useState<TrustLineHolder[]>([]);
+  const [searchHolder, setSearchHolder] = useState('');
+  const [selectedHolderAction, setSelectedHolderAction] = useState<{holder: TrustLineHolder, action: 'freeze' | 'clawback'} | null>(null);
 
   useEffect(() => {
     // Reset form when asset changes
     setIssuerAddress(selectedAsset.issuer);
     setRequireAuth(selectedAsset.flags.requireAuth);
     setDefaultRipple(selectedAsset.flags.defaultRipple);
+    setHolders(MOCK_HOLDERS[selectedAsset.currency] || []);
+    setSelectedHolderAction(null);
   }, [selectedAsset]);
 
   const accountSetTx = xrplService.generateAccountSet(issuerAddress, requireAuth, defaultRipple);
-  const authTx = xrplService.generateTrustSet(issuerAddress, targetUser, selectedAsset.currency, "0", true);
+
+  // Generate compliance payload based on selection
+  const complianceTx = selectedHolderAction?.action === 'freeze'
+    ? xrplService.generateTrustSet(issuerAddress, selectedHolderAction.holder.address, selectedAsset.currency, "0", false, true)
+    : selectedHolderAction?.action === 'clawback'
+        ? xrplService.generateClawback(issuerAddress, selectedHolderAction.holder.address, selectedAsset.currency, selectedHolderAction.holder.balance)
+        : null;
 
   const handleDeploy = () => {
     if (addToast) addToast('success', 'Configuration Updated', `Asset flags for ${selectedAsset.currency} broadcasted to ledger.`);
   };
 
-  const handleAuthorize = () => {
-    if (addToast) addToast('success', 'TrustLine Authorized', `User ${targetUser.substring(0,8)}... authorized for ${selectedAsset.currency}.`);
+  const handleExecuteCompliance = () => {
+    if (!selectedHolderAction) return;
+    if (addToast) {
+        const title = selectedHolderAction.action === 'freeze' ? 'Account Frozen' : 'Funds Clawed Back';
+        const msg = selectedHolderAction.action === 'freeze' 
+            ? `Global freeze applied to TrustLine for ${selectedHolderAction.holder.address.substring(0,8)}...`
+            : `Recovered ${selectedHolderAction.holder.balance} ${selectedAsset.currency} from ${selectedHolderAction.holder.address.substring(0,8)}...`;
+        addToast('warning', title, msg);
+    }
+    
+    // Optimistic Update
+    const updatedHolders = holders.map(h => {
+        if (h.address === selectedHolderAction.holder.address) {
+            return {
+                ...h,
+                status: selectedHolderAction.action === 'freeze' ? 'frozen' : h.status,
+                balance: selectedHolderAction.action === 'clawback' ? '0.00' : h.balance
+            } as TrustLineHolder;
+        }
+        return h;
+    });
+    setHolders(updatedHolders);
+    setSelectedHolderAction(null);
   };
 
   const handleCreateAsset = (newAsset: Asset) => {
@@ -138,7 +179,7 @@ export const AssetLayer: React.FC<AssetLayerProps> = ({ walletAddress, addToast 
 
         {/* Configuration Panel */}
         <div className="lg:col-span-9 space-y-6">
-          <div className="bg-nexus-800/50 backdrop-blur-sm rounded-xl border border-nexus-700">
+          <div className="bg-nexus-800/50 backdrop-blur-sm rounded-xl border border-nexus-700 flex flex-col min-h-[500px]">
             
             {/* Tabs */}
             <div className="flex border-b border-nexus-700">
@@ -152,13 +193,13 @@ export const AssetLayer: React.FC<AssetLayerProps> = ({ walletAddress, addToast 
                 onClick={() => setActiveTab('trustlines')}
                 className={`px-6 py-4 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'trustlines' ? 'border-nexus-accent text-white' : 'border-transparent text-gray-400 hover:text-white'}`}
               >
-                <Users size={16} /> TrustLine Authorization
+                <Users size={16} /> Cap Table & Holders
               </button>
             </div>
 
-            <div className="p-6">
+            <div className="p-6 flex-1">
               {activeTab === 'config' ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8 h-full">
                    <div className="space-y-4">
                       <div>
                         <label className="block text-sm text-gray-400 mb-1">Cold Wallet (Issuer)</label>
@@ -209,34 +250,111 @@ export const AssetLayer: React.FC<AssetLayerProps> = ({ walletAddress, addToast 
                    </div>
                 </div>
               ) : (
-                <div className="space-y-6">
-                   <div className="bg-nexus-warning/10 border border-nexus-warning/20 rounded-lg p-4 flex items-start gap-3">
-                      <AlertOctagon className="text-nexus-warning shrink-0" size={20} />
-                      <div>
-                        <h4 className="text-nexus-warning font-bold text-sm">Authorization Required</h4>
-                        <p className="text-gray-400 text-xs mt-1">
-                          Asset <strong className="text-white">{selectedAsset.currency}</strong> requires explicit issuer approval. Users must first set a TrustLine to the issuer before you can authorize it here.
-                        </p>
-                      </div>
+                <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 h-full">
+                   {/* Table View */}
+                   <div className="xl:col-span-2 flex flex-col">
+                        <div className="flex gap-2 mb-4">
+                            <div className="relative flex-1">
+                                <Search size={14} className="absolute left-3 top-3 text-gray-500" />
+                                <input 
+                                    value={searchHolder}
+                                    onChange={(e) => setSearchHolder(e.target.value)}
+                                    placeholder="Search by address..."
+                                    className="w-full bg-nexus-900 border border-nexus-700 rounded-lg py-2 pl-9 pr-3 text-sm text-white focus:outline-none focus:border-nexus-600"
+                                />
+                            </div>
+                            <button className="bg-nexus-800 hover:bg-nexus-700 border border-nexus-700 text-gray-300 p-2 rounded-lg">
+                                <RefreshCcw size={18} />
+                            </button>
+                        </div>
+                        
+                        <div className="bg-nexus-900/50 border border-nexus-700 rounded-lg overflow-hidden flex-1">
+                            <table className="w-full text-left text-sm">
+                                <thead className="bg-nexus-800 text-gray-400 text-xs uppercase font-bold">
+                                    <tr>
+                                        <th className="p-3">Holder Address</th>
+                                        <th className="p-3 text-right">Balance</th>
+                                        <th className="p-3 text-center">Status</th>
+                                        <th className="p-3 text-right">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-nexus-800">
+                                    {holders.filter(h => h.address.includes(searchHolder)).map((holder) => (
+                                        <tr key={holder.address} className="hover:bg-nexus-800/50 transition-colors group">
+                                            <td className="p-3 font-mono text-nexus-accent">{holder.address}</td>
+                                            <td className="p-3 text-right font-mono text-white">{holder.balance}</td>
+                                            <td className="p-3 text-center">
+                                                {holder.status === 'active' && <span className="px-2 py-0.5 rounded text-[10px] bg-nexus-success/10 text-nexus-success border border-nexus-success/20">Active</span>}
+                                                {holder.status === 'frozen' && <span className="px-2 py-0.5 rounded text-[10px] bg-nexus-danger/10 text-nexus-danger border border-nexus-danger/20">Frozen</span>}
+                                            </td>
+                                            <td className="p-3 flex justify-end gap-2">
+                                                <button 
+                                                    onClick={() => setSelectedHolderAction({holder, action: 'freeze'})}
+                                                    title="Freeze Account"
+                                                    className="p-1.5 rounded hover:bg-nexus-danger/20 text-gray-500 hover:text-nexus-danger transition-colors"
+                                                >
+                                                    <Lock size={14} />
+                                                </button>
+                                                {selectedAsset.flags.requireAuth && (
+                                                    <button 
+                                                        onClick={() => setSelectedHolderAction({holder, action: 'clawback'})}
+                                                        title="Clawback Funds"
+                                                        className="p-1.5 rounded hover:bg-nexus-warning/20 text-gray-500 hover:text-nexus-warning transition-colors"
+                                                    >
+                                                        <Ban size={14} />
+                                                    </button>
+                                                )}
+                                            </td>
+                                        </tr>
+                                    ))}
+                                    {holders.length === 0 && (
+                                        <tr><td colSpan={4} className="p-6 text-center text-gray-500">No active TrustLines found for {selectedAsset.currency}.</td></tr>
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
                    </div>
 
-                   <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                      <div className="space-y-4">
-                         <div>
-                            <label className="block text-sm text-gray-400 mb-1">Target User Address</label>
-                            <input 
-                              value={targetUser}
-                              onChange={(e) => setTargetUser(e.target.value)}
-                              className="w-full bg-nexus-900 border border-nexus-700 rounded p-2 text-white font-mono text-sm focus:border-nexus-accent focus:outline-none"
-                            />
-                         </div>
-                         <button onClick={handleAuthorize} className="w-full border border-nexus-success text-nexus-success hover:bg-nexus-success/10 font-bold py-2 rounded transition-colors flex items-center justify-center gap-2">
-                            <CheckCircle2 size={18} /> Authorize TrustLine
-                         </button>
-                      </div>
-                      <div className="bg-nexus-900 rounded-lg border border-nexus-700">
-                         <JsonViewer data={authTx} title="Authorization Payload" />
-                      </div>
+                   {/* Action Panel */}
+                   <div className="xl:col-span-1 bg-nexus-900 border border-nexus-700 rounded-lg p-4 flex flex-col">
+                        <h4 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
+                            <AlertOctagon size={16} className="text-nexus-warning" /> Compliance Action
+                        </h4>
+                        
+                        {selectedHolderAction ? (
+                            <div className="space-y-4 flex-1 flex flex-col">
+                                <div className="p-3 bg-nexus-800 rounded border border-nexus-700 text-sm">
+                                    <div className="text-gray-400 text-xs mb-1">Target Account</div>
+                                    <div className="font-mono text-white break-all">{selectedHolderAction.holder.address}</div>
+                                    <div className="mt-2 text-gray-400 text-xs mb-1">Action Type</div>
+                                    <div className={`font-bold ${selectedHolderAction.action === 'freeze' ? 'text-nexus-danger' : 'text-nexus-warning'}`}>
+                                        {selectedHolderAction.action === 'freeze' ? 'FREEZE TRUSTLINE' : 'CLAWBACK FUNDS'}
+                                    </div>
+                                </div>
+
+                                <div className="flex-1 min-h-[150px]">
+                                     <JsonViewer data={complianceTx} title="Payload Preview" />
+                                </div>
+
+                                <button 
+                                    onClick={handleExecuteCompliance}
+                                    className={`w-full py-3 rounded-lg font-bold text-nexus-900 transition-colors ${selectedHolderAction.action === 'freeze' ? 'bg-nexus-danger hover:bg-red-400' : 'bg-nexus-warning hover:bg-amber-400'}`}
+                                >
+                                    Confirm Execution
+                                </button>
+                                <button 
+                                    onClick={() => setSelectedHolderAction(null)}
+                                    className="w-full py-2 text-gray-500 hover:text-white transition-colors text-sm"
+                                >
+                                    Cancel
+                                </button>
+                            </div>
+                        ) : (
+                            <div className="flex-1 flex flex-col items-center justify-center text-gray-500 text-center p-4">
+                                <Shield size={48} className="mb-3 opacity-20" />
+                                <p className="text-sm">Select a holder from the list to initiate compliance actions.</p>
+                            </div>
+                        )}
                    </div>
                 </div>
               )}
