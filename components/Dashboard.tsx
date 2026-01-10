@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { AppPhase } from '../types';
 import { Activity, ArrowRight, ShieldCheck, Zap, Server, TrendingUp } from 'lucide-react';
 import { AreaChart, Area, ResponsiveContainer, YAxis } from 'recharts';
+import { xrplService } from '../services/xrplService';
 
 interface DashboardProps {
   walletAddress?: string;
@@ -9,14 +10,24 @@ interface DashboardProps {
   setActivePhase: (phase: AppPhase) => void;
 }
 
-// Micro-scaling: Mock history data for sparklines
-const SPARK_LIQUIDITY = [{v:10}, {v:12}, {v:11}, {v:14}, {v:13}, {v:15}, {v:18}, {v:20}];
-const SPARK_TRUST = [{v:50}, {v:55}, {v:60}, {v:58}, {v:65}, {v:70}, {v:75}, {v:80}];
-const SPARK_VOLUME = [{v:100}, {v:80}, {v:60}, {v:90}, {v:120}, {v:110}, {v:130}, {v:140}];
-const SPARK_POOLS = [{v:20}, {v:20}, {v:21}, {v:21}, {v:22}, {v:23}, {v:23}, {v:24}];
+// Sparkline Mock Generators (Visual only)
+const generateSpark = (base: number) => Array(8).fill(0).map(() => ({ v: base + Math.random() * (base * 0.2) - (base * 0.1) }));
 
 export const Dashboard: React.FC<DashboardProps> = ({ walletAddress, setIsWalletModalOpen, setActivePhase }) => {
-  
+  const [stats, setStats] = useState({ liquidity: 0, volume: 0, assets: 0, pools: 0 });
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchStats = async () => {
+        const data = await xrplService.getDashboardStats();
+        setStats(data);
+        setLoading(false);
+    };
+    fetchStats();
+    const interval = setInterval(fetchStats, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
   const StatCard = ({ label, val, change, color, icon: Icon, data, chartColor }: any) => (
     <div className="bg-nexus-800/50 backdrop-blur p-0 rounded-xl border border-nexus-700 hover:border-nexus-600 transition-all group hover:shadow-lg hover:shadow-nexus-900/50 overflow-hidden relative flex flex-col h-32">
         <div className="p-4 z-10 flex flex-col h-full justify-between">
@@ -25,7 +36,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ walletAddress, setIsWallet
                 <Icon size={16} className="text-gray-600 group-hover:text-white transition-colors" />
             </div>
             <div>
-                <div className={`text-2xl font-bold ${color}`}>{val}</div>
+                <div className={`text-2xl font-bold ${color}`}>
+                    {loading ? '...' : val}
+                </div>
                 <div className="text-xs text-gray-500 flex items-center gap-1 mt-1">
                     <span className="text-nexus-success bg-nexus-success/10 px-1 rounded flex items-center gap-0.5">
                         <TrendingUp size={10} /> {change}
@@ -73,38 +86,38 @@ export const Dashboard: React.FC<DashboardProps> = ({ walletAddress, setIsWallet
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <StatCard 
             label="Total Liquidity" 
-            val="$12.4M" 
+            val={`$${(stats.liquidity / 1000000).toFixed(1)}M`} 
             change="+2.4%" 
             color="text-nexus-accent" 
             icon={Zap} 
-            data={SPARK_LIQUIDITY}
+            data={generateSpark(10)}
             chartColor="#38bdf8"
         />
         <StatCard 
-            label="Active TrustLines" 
-            val="8,249" 
-            change="+124" 
+            label="Active Assets" 
+            val={stats.assets} 
+            change="+1" 
             color="text-nexus-success" 
             icon={ShieldCheck} 
-            data={SPARK_TRUST}
+            data={generateSpark(5)}
             chartColor="#10b981"
         />
         <StatCard 
             label="24h Volume" 
-            val="$4.2M" 
+            val={`$${(stats.volume / 1000000).toFixed(1)}M`} 
             change="-0.5%" 
             color="text-white" 
             icon={Activity} 
-            data={SPARK_VOLUME}
+            data={generateSpark(20)}
             chartColor="#94a3b8"
         />
         <StatCard 
             label="AMM Pools" 
-            val="142" 
+            val={stats.pools}
             change="+3" 
             color="text-nexus-warning" 
             icon={Server} 
-            data={SPARK_POOLS}
+            data={generateSpark(8)}
             chartColor="#f59e0b"
         />
       </div>
@@ -152,21 +165,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ walletAddress, setIsWallet
                 <Activity size={18} className="text-nexus-accent" /> Network Activity
             </h3>
             <div className="flex-1 overflow-y-auto pr-2 space-y-4 max-h-[250px] custom-scrollbar">
-                 {[
-                     { type: 'AMMDeposit', desc: 'Liquidity Added to XRP/USD', time: '2m ago', status: 'success' },
-                     { type: 'OfferCreate', desc: 'Bid placed for 5000 XRP', time: '5m ago', status: 'success' },
-                     { type: 'TrustSet', desc: 'TrustLine Authorized for EUR', time: '12m ago', status: 'success' },
-                     { type: 'Payment', desc: 'Cross-currency payment failed', time: '45m ago', status: 'failed' },
-                 ].map((item, i) => (
-                     <div key={i} className="flex items-start gap-3 p-3 rounded-lg bg-nexus-900/50 border border-nexus-700/50 hover:border-nexus-600 transition-colors">
-                         <div className={`mt-1 w-2 h-2 rounded-full ${item.status === 'success' ? 'bg-nexus-success' : 'bg-nexus-danger'}`}></div>
-                         <div>
-                             <div className="text-sm font-medium text-white">{item.type}</div>
-                             <div className="text-xs text-gray-400">{item.desc}</div>
-                             <div className="text-[10px] text-gray-600 mt-1 uppercase tracking-wide">{item.time}</div>
-                         </div>
-                     </div>
-                 ))}
+                 <LiveActivityFeed />
             </div>
             <div className="mt-4 pt-3 border-t border-nexus-700 text-center">
                 <button 
@@ -181,3 +180,34 @@ export const Dashboard: React.FC<DashboardProps> = ({ walletAddress, setIsWallet
     </div>
   );
 };
+
+const LiveActivityFeed = () => {
+    const [txs, setTxs] = useState<any[]>([]);
+    
+    useEffect(() => {
+        const fetchTxs = async () => {
+            const history = await xrplService.getTransactions();
+            setTxs(history.slice(0, 5));
+        };
+        fetchTxs();
+        const interval = setInterval(fetchTxs, 3000);
+        return () => clearInterval(interval);
+    }, []);
+
+    if (txs.length === 0) return <div className="text-xs text-gray-500">Loading chain data...</div>;
+
+    return (
+        <>
+        {txs.map((item, i) => (
+             <div key={item.id} className="flex items-start gap-3 p-3 rounded-lg bg-nexus-900/50 border border-nexus-700/50 hover:border-nexus-600 transition-colors">
+                 <div className={`mt-1 w-2 h-2 rounded-full ${item.status === 'validated' ? 'bg-nexus-success' : 'bg-nexus-danger'}`}></div>
+                 <div>
+                     <div className="text-sm font-medium text-white">{item.type}</div>
+                     <div className="text-xs text-gray-400">{item.details}</div>
+                     <div className="text-[10px] text-gray-600 mt-1 uppercase tracking-wide">{item.timestamp}</div>
+                 </div>
+             </div>
+         ))}
+         </>
+    );
+}

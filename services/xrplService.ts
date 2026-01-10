@@ -1,33 +1,123 @@
-import { LedgerInfo, TransactionTemplate } from '../types';
+import { LedgerInfo, TransactionTemplate, Asset, TrustLineHolder, AuditLogEntry, Order } from '../types';
 
-// In a real app, we would import { Client } from 'xrpl';
-// Since we are in a pure frontend environment without node polyfills guaranteed,
-// we will simulate the connection logic to ensure the UI demonstrates functionality 
-// according to the blueprint provided.
-
-const TESTNET_URL = 'wss://s.altnet.rippletest.net:51233';
+// Mock Data Generators
+const generateId = () => Math.random().toString(36).substr(2, 9);
+const timestamp = () => new Date().toISOString().replace('T', ' ').substring(0, 19);
 
 export class XRPLService {
   private isConnected: boolean = false;
+  
+  // Ledger State (Mock Database)
+  private ledgerIndex: number = 85000000;
+  private assets: Asset[] = [
+    { 
+      id: '1', 
+      currency: 'USD', 
+      supply: '10,000,000', 
+      issuer: 'rK...ColdWallet',
+      flags: { requireAuth: true, defaultRipple: true, freeze: false }
+    },
+    { 
+      id: '2', 
+      currency: 'EUR', 
+      supply: '5,000,000', 
+      issuer: 'rK...ColdWallet',
+      flags: { requireAuth: true, defaultRipple: true, freeze: false }
+    }
+  ];
+  
+  private transactions: AuditLogEntry[] = [
+     { id: '1', hash: '5F2A...9B3C', type: 'OfferCreate', status: 'validated', timestamp: '2023-10-24 10:42:01', details: 'Buy 5000 XRP @ 0.55' },
+     { id: '2', hash: '8D1E...2F4A', type: 'TrustSet', status: 'validated', timestamp: '2023-10-24 09:15:33', details: 'Set Trust USD (rK...)' }
+  ];
+
+  private pools = {
+      'XRP/USD': { xrp: 1000000, token: 550000, vol24h: 4200000 },
+      'XRP/EUR': { xrp: 800000, token: 400000, vol24h: 1200000 }
+  };
 
   async connect(): Promise<boolean> {
-    // Simulate connection delay
     await new Promise(resolve => setTimeout(resolve, 800));
     this.isConnected = true;
     return true;
   }
 
   async getLedgerInfo(): Promise<LedgerInfo> {
-    // Simulate fetching ledger data
+    this.ledgerIndex++;
     return {
-      ledgerIndex: 85000000 + Math.floor(Math.random() * 100),
+      ledgerIndex: this.ledgerIndex,
       closeTime: new Date().toISOString(),
-      txCount: Math.floor(Math.random() * 50) + 10,
+      txCount: Math.floor(Math.random() * 20) + 5,
       totalCoins: "99,989,500,000"
     };
   }
 
-  // Phase 2: Asset Layer Templates
+  async getAssets(): Promise<Asset[]> {
+      return [...this.assets];
+  }
+
+  async getTransactions(): Promise<AuditLogEntry[]> {
+      return [...this.transactions];
+  }
+
+  async getDashboardStats() {
+      const totalLiquidity = Object.values(this.pools).reduce((acc, pool) => acc + (pool.token * 2), 0); // Roughly 2x token side value
+      const totalVolume = Object.values(this.pools).reduce((acc, pool) => acc + pool.vol24h, 0);
+      return {
+          liquidity: totalLiquidity,
+          volume: totalVolume,
+          assets: this.assets.length,
+          pools: Object.keys(this.pools).length
+      };
+  }
+
+  // --- Transaction Submission Simulation ---
+
+  async submitTransaction(tx: TransactionTemplate): Promise<{ hash: string, result: string }> {
+      // Simulate network delay
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      const hash = Array(64).fill(0).map(() => Math.floor(Math.random() * 16).toString(16)).join('').toUpperCase();
+      const shortHash = `${hash.substring(0,4)}...${hash.substring(60)}`;
+      
+      let details = "";
+      if (tx.TransactionType === 'Payment') details = `Sent ${tx.Amount.value || parseFloat(tx.Amount)/1000000 + ' XRP'}`;
+      else if (tx.TransactionType === 'TrustSet') details = `TrustSet ${tx.LimitAmount.currency}`;
+      else if (tx.TransactionType === 'AccountSet') details = `AccountConfig Update`;
+      else if (tx.TransactionType === 'OfferCreate') details = `${tx.Flags === 524288 ? 'Sell' : 'Buy'} Limit Order`;
+      else if (tx.TransactionType === 'AMMDeposit') details = `Liquidity Add ${tx.Asset2.currency}`;
+      else if (tx.TransactionType === 'AMMWithdraw') details = `Liquidity Remove ${tx.Asset2.currency}`;
+      else details = tx.TransactionType;
+
+      // Persist to Mock History
+      const entry: AuditLogEntry = {
+          id: generateId(),
+          hash: shortHash,
+          type: tx.TransactionType,
+          status: 'validated',
+          timestamp: timestamp(),
+          details: details
+      };
+      
+      this.transactions.unshift(entry);
+
+      // State Side Effects
+      if (tx.TransactionType === 'Payment' && tx.Amount.currency && tx.Amount.issuer === 'self') {
+           // Simulate Issuance
+           this.assets.push({
+               id: generateId(),
+               currency: tx.Amount.currency,
+               supply: tx.Amount.value,
+               issuer: tx.Account,
+               flags: { requireAuth: false, defaultRipple: true, freeze: false }
+           });
+      }
+
+      return { hash: shortHash, result: 'tesSUCCESS' };
+  }
+
+  // --- Transaction Builders ---
+
   generateAccountSet(address: string, requireAuth: boolean, defaultRipple: boolean): TransactionTemplate {
     const tx: TransactionTemplate = {
       TransactionType: "AccountSet",
@@ -40,8 +130,6 @@ export class XRPLService {
     if (defaultRipple) tx.SetFlag = 8; // asfDefaultRipple
     if (requireAuth) {
       if (tx.SetFlag) {
-        // XRPL doesn't allow duplicate keys in JSON, usually handled by array or separate props in library.
-        // For display purposes we show the intent.
         tx.SetFlag_RequireAuth = 7; 
       } else {
         tx.SetFlag = 7;
@@ -88,8 +176,16 @@ export class XRPLService {
     };
   }
 
-  generatePayment(account: string, destination: string, currency: string, issuer: string, amount: string): TransactionTemplate {
-      return {
+  generatePayment(
+      account: string, 
+      destination: string, 
+      currency: string, 
+      issuer: string, 
+      amount: string, 
+      sendMax?: string,
+      deliverMin?: string
+  ): TransactionTemplate {
+      const tx: TransactionTemplate = {
           TransactionType: "Payment",
           Account: account || "RF_COLD_WALLET_ADDRESS",
           Destination: destination || "USER_HOT_WALLET_ADDRESS",
@@ -100,9 +196,22 @@ export class XRPLService {
           },
           Fee: "12"
       };
+
+      if (sendMax) {
+          tx.SendMax = (parseFloat(sendMax) * 1000000).toString(); 
+      }
+      
+      if (deliverMin) {
+          tx.DeliverMin = {
+              currency: currency,
+              issuer: issuer,
+              value: deliverMin
+          }
+      }
+
+      return tx;
   }
 
-  // Phase 3: Exchange Layer Templates
   generateAMMCreate(account: string, issuer: string, currency: string, xrpAmount: string, tokenAmount: string, fee: number): TransactionTemplate {
     return {
       TransactionType: "AMMCreate",
@@ -118,8 +227,17 @@ export class XRPLService {
     };
   }
 
-  generateAMMDeposit(account: string, issuer: string, currency: string, xrpAmount: string, tokenAmount: string): TransactionTemplate {
-    return {
+  generateAMMDeposit(
+      account: string, 
+      issuer: string, 
+      currency: string, 
+      xrpAmount: string, 
+      tokenAmount: string,
+      strategy: 'balanced' | 'single' = 'balanced'
+    ): TransactionTemplate {
+    
+    // Base object
+    const tx: TransactionTemplate = {
       TransactionType: "AMMDeposit",
       Account: account || "USER_WALLET",
       Asset: { currency: "XRP" },
@@ -127,37 +245,83 @@ export class XRPLService {
         currency: currency || "USD",
         issuer: issuer || "RF_COLD_WALLET_ADDRESS"
       },
-      Amount: (parseFloat(xrpAmount) * 1000000).toString(),
-      Amount2: {
-        currency: currency,
-        issuer: issuer,
-        value: tokenAmount
-      },
-      Flags: 1048576 // tfTwoAsset
+      Fee: "12"
     };
+
+    if (strategy === 'balanced') {
+        tx.Flags = 1048576; // tfTwoAsset
+        tx.Amount = (parseFloat(xrpAmount) * 1000000).toString();
+        tx.Amount2 = {
+            currency: currency,
+            issuer: issuer,
+            value: tokenAmount
+        };
+    } else {
+        tx.Flags = 2097152; // tfOneAssetLPToken
+        
+        if (xrpAmount && parseFloat(xrpAmount) > 0) {
+            tx.Amount = (parseFloat(xrpAmount) * 1000000).toString();
+        } else {
+             tx.Amount2 = {
+                currency: currency,
+                issuer: issuer,
+                value: tokenAmount
+            };
+        }
+    }
+
+    return tx;
+  }
+
+  generateAMMWithdraw(
+      account: string,
+      issuer: string,
+      currency: string,
+      lpTokenAmount: string,
+      isWithdrawAll: boolean = false
+  ): TransactionTemplate {
+      const tx: TransactionTemplate = {
+          TransactionType: "AMMWithdraw",
+          Account: account || "USER_WALLET",
+          Asset: { currency: "XRP" },
+          Asset2: {
+              currency: currency || "USD",
+              issuer: issuer || "RF_COLD_WALLET_ADDRESS"
+          },
+          Fee: "12"
+      };
+
+      if (isWithdrawAll) {
+          tx.Flags = 131072; // tfWithdrawAll
+      } else {
+          tx.Flags = 65536; // tfLPToken
+          tx.LPTokenIn = {
+              currency: "03000000...", 
+              issuer: issuer,
+              value: lpTokenAmount
+          };
+      }
+
+      return tx;
   }
 
   generateOfferCreate(account: string, type: 'Buy' | 'Sell', baseCurrency: string, quoteCurrency: string, amount: string, price: string): TransactionTemplate {
-    // CLOB Logic:
-    // Buy XRP (Base) with USD (Quote): You Give USD (TakerGets), You Want XRP (TakerPays)
-    // Sell XRP (Base) for USD (Quote): You Give XRP (TakerGets), You Want USD (TakerPays)
-    
     const xrpAmountDrops = (parseFloat(amount) * 1000000).toString();
     const quoteAmount = (parseFloat(amount) * parseFloat(price)).toFixed(4);
     const quoteAsset = {
         currency: quoteCurrency,
-        issuer: "RF_COLD_WALLET_ADDRESS", // Simplified for demo
+        issuer: "RF_COLD_WALLET_ADDRESS",
         value: quoteAmount
     };
 
     let takerPays, takerGets;
 
     if (type === 'Buy') {
-        takerPays = xrpAmountDrops; // I want XRP
-        takerGets = quoteAsset;     // I give USD
+        takerPays = xrpAmountDrops;
+        takerGets = quoteAsset;
     } else {
-        takerPays = quoteAsset;     // I want USD
-        takerGets = xrpAmountDrops; // I give XRP
+        takerPays = quoteAsset;
+        takerGets = xrpAmountDrops;
     }
 
     return {
@@ -166,7 +330,7 @@ export class XRPLService {
         TakerPays: takerPays,
         TakerGets: takerGets,
         Fee: "12",
-        Flags: type === 'Sell' ? 524288 : 0 // tfSell (Canonical Flag)
+        Flags: type === 'Sell' ? 524288 : 0 // tfSell
     };
   }
 }
